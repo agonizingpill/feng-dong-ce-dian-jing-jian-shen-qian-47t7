@@ -3,7 +3,7 @@ from sqlalchemy.orm import Mapped,mapped_column
 from .db import Base
 class TunnelRun(Base):
     __tablename__='tunnel_runs'
-    __table_args__=(CheckConstraint("state in ('planned','running','completed')"),CheckConstraint('speed > 0 AND speed <= 100 AND target_angle >= -30 AND target_angle <= 30'))
+    __table_args__=(CheckConstraint("state in ('planned','running','completed','aborted')"),CheckConstraint('speed > 0 AND speed <= 100 AND target_angle >= -30 AND target_angle <= 30'))
     id:Mapped[int]=mapped_column(primary_key=True)
     layout_id:Mapped[int]=mapped_column(ForeignKey('layouts.id'))
     code:Mapped[str]=mapped_column(String(60),unique=True)

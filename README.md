@@ -96,6 +96,29 @@ seed另有P01/P05两张有效已签演示证书及P09一张过期证书（明确
 MIT License。
 
 
+## 紧急停风与复检解锁（v4）
+
+开车前勾选的联锁只在开车时刻校核，运行中无法封锁风洞。新增独立停风闸门：
+
+- `POST /wind-stops`（admin/engineer）写入 `WindStopEvent`，缘由至少8字；任何运行中 `TunnelRun` 在同一持锁事务内转为终态 `aborted`，并写 `RunAbort`（停风编号、缘由、原开车时刻与快照仍在原行）。
+- 停风为全局封锁：`POST /tunnel-runs/{id}/start`、新采集批次、采样写入、冻结、交付提交在封锁期间一律拒绝。已采实样保留在 `ChannelReading`，但中止试验禁止冻结与交付；已完结试验、历史快照与历史交付照旧，不受影响。
+- 并发：开车、停风、解锁、采样写与冻结都先取单行 `TunnelControl` 的 `FOR UPDATE` 锁，再读活动停风与试验状态。因此停风与开车/采样并发时，停风提交后不存在仍运行或新写样本的试验（停风先到则新开车被拒；开车/采样先到则随停风事务一并中止）。
+- `POST /wind-stops` 可带客户端生成的 `request_id`；`wind_stop_requests` 作幂等键，响应丢失后重试同一标识不会新增事件，即使该次停风已解锁或已有更新停风。未带标识时每次调用视为一次新的停风请求。
+- `POST /wind-stops/{id}/release` 仅 admin，要求 `recheck_confirmed=true` 与至少8字复检说明；解锁只放行新试验，`aborted` 不恢复为 `running`/`planned`。重复提交同一解锁返回原结果、不新增事件；对已结束停风的迟到解锁返回409，绝不会解除当前更新的封锁。
+- 升级：`src/migrations.py` 在启动时 `create_all` 新表（`tunnel_controls`、`wind_stop_events`、`wind_stop_requests`、`run_aborts`），并在 MySQL 上把 `tunnel_runs` 的 state 检查约束扩为含 `aborted`。原开车快照、实样与历史状态一行不改、不补造。
+- 前端「试验开车」页可填缘由急停、列表与横幅显示封锁缘由/中止试验、负责人复检解锁；采集与交付页显示中止实样的冻结/交付禁令与停风横幅。
+
+|接口|权限|
+|---|---|
+|GET /wind-stops、/wind-stops/active|三角色读取|
+|POST /wind-stops|admin/engineer紧急停风|
+|POST /wind-stops/{id}/release|仅admin复检解锁|
+
+停风不驱动真实风机，也不新增硬件联锁：生产应由独立设备安全系统执行，本项目记录业务封锁与证据。
+
+追加源文件：`windstop_models.py` 为控制行、停风事件、重试标识与中止记录；`windstop_schemas.py` 校验缘由、复检确认与重试标识；`windstop_service.py` 持锁执行停风/解锁并计算中止清单；`readiness_routes.py` 暴露接口；`migrations.py` 在启动时建新表并放宽旧状态约束。
+
+
 ## 装夹、采集与交付（三个追加模块 / v3）
 
 现有六页保留，新增翼模装夹、通道采集、试验交付三页。主管负责装夹验收、采集冻结和交付核准；工程师可编制/关联装夹、录入采样、提交交付及登记回执，viewer九页只读。所有写权限与状态门槛由后端执行。

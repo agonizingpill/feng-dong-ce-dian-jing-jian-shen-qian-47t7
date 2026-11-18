@@ -5,8 +5,12 @@ from .run_models import TunnelRun
 from .acquisition_models import AcquisitionBatch,ChannelReading
 from .calibration_service import locked
 from .services import pack,audit
+from . import windstop_service as windstop
+STOPPED='紧急停风封锁中，中止试验的已采实样仅留存，不得新建批次、写入采样、冻结或交付'
 
 def create(s,d,u):
+    windstop.control(s)
+    if windstop.active(s):raise HTTPException(409,STOPPED)
     r=locked(s,TunnelRun,d.run_id)
     if r.state!='running':raise HTTPException(409,'只有运行中的试验可开采集批次')
     if s.scalar(select(AcquisitionBatch.id).where(AcquisitionBatch.run_id==r.id)):raise HTTPException(409,'本试验已有采集批次')
@@ -17,6 +21,10 @@ def context(s,id):
     if not pre:raise HTTPException(404,'采集批次不存在')
     r=locked(s,TunnelRun,pre.run_id);return locked(s,AcquisitionBatch,id),r
 def write(s,id,d,u):
+    # Lock order is control → run → batch, matching stop so a committed stop
+    # cannot leave a trailing sample write behind.
+    windstop.control(s)
+    if windstop.active(s):raise HTTPException(409,STOPPED)
     x,r=context(s,id)
     if x.state!='collecting' or r.state!='running':raise HTTPException(409,'仅运行中未冻结批次可写采样')
     ids=[p['id'] for p in r.snapshot['probes']];incoming=[v.probe_id for v in d.readings]
@@ -33,8 +41,10 @@ def summary(s,x,r):
         channels.append({'probe_id':pid,'samples':count,'mean_pa':round(fmean(row.values),6) if row else None,'missing_rate':round(max(0,expected-count)/expected,6)})
     return {'expected_samples_per_channel':expected,'channels':channels,'missing_rate':round(fmean(c['missing_rate'] for c in channels),6),'mean_pressure_pa':round(fmean(v.value for v in rows),6) if rows else None,'channel_count':len(rows),'required_channels':len(ids)}
 def freeze(s,id,u):
+    windstop.control(s)
     x,r=context(s,id)
     if x.state!='collecting':raise HTTPException(409,'采集已经冻结，不能重复签署')
+    if r.state=='aborted':raise HTTPException(409,'停风中止的试验只留存已采实样，不得冻结或交付')
     report=summary(s,x,r)
     if report['channel_count']!=report['required_channels'] or any(c['samples']<report['expected_samples_per_channel'] for c in report['channels']):raise HTTPException(409,'通道缺失或实际样本不足，不能冻结完整采集')
     x.summary=report;x.state='frozen';x.frozen_by=u.email;audit(s,u,'主管冻结完整采集 '+str(id));return view(s,x)

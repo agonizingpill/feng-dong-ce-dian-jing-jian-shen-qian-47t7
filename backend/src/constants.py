@@ -3,7 +3,8 @@ ZONES=('root','mid','tip')
 LAYOUT_STATES=('calculating','ready','signed','invalidated','failed')
 
 CERTIFICATE_STATES=('draft','issued')
-RUN_STATES=('planned','running','completed')
+RUN_STATES=('planned','running','completed','aborted')
+WIND_STOP_STATES=('active','released')
 
 MOUNT_STATES=('draft','accepted')
 BATCH_STATES=('collecting','frozen')

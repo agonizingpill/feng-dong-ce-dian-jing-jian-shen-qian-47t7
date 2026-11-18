@@ -5,7 +5,7 @@ from sqlalchemy import select,delete
 from sqlalchemy.exc import IntegrityError
 from fastapi import FastAPI,Depends,HTTPException
 from fastapi.responses import JSONResponse
-from .db import Base,engine,db_session
+from .db import engine,db_session
 from .models import User,Probe,Sweep,Pressure,Layout,LayoutProbe,Audit
 from .auth import current,writers,admin,verify,token
 from .schemas import Login,ProbeInput,SweepInput,LayoutInput,Selection
@@ -13,11 +13,12 @@ from .services import get,pack,pack_layout,pack_sweep,audit,invalidate,assign,ch
 from .middlewares import RequestTrace,BurstGuard
 from .readiness_routes import router as readiness_router
 from .testcycle_routes import router as testcycle_router
-from .constants import ROLES,ZONES,LAYOUT_STATES
+from .constants import ROLES,ZONES,LAYOUT_STATES,RUN_STATES
+from .migrations import upgrade
 r=redis.Redis.from_url(os.environ['REDIS_URL'],decode_responses=True)
 @asynccontextmanager
 async def lifespan(app):
-    Base.metadata.create_all(engine)
+    upgrade()
     if os.getenv('SEED_DEMO','true')=='true':
         try:
             from scripts.seed_demo import seed
@@ -37,7 +38,7 @@ def login(p:Login,s=Depends(db_session)):
 @app.get('/me')
 def me(u=Depends(current)):return {'email':u.email,'role':u.role}
 @app.get('/enums')
-def enums(u=Depends(current)):return {'roles':ROLES,'zones':ZONES,'layout_states':LAYOUT_STATES}
+def enums(u=Depends(current)):return {'roles':ROLES,'zones':ZONES,'layout_states':LAYOUT_STATES,'run_states':RUN_STATES}
 @app.get('/probes')
 def probes(s=Depends(db_session),u=Depends(current)):return [pack(x)for x in s.scalars(select(Probe).order_by(Probe.id))]
 @app.put('/probes/{pid}')

@@ -10,6 +10,7 @@ from .services import pack,audit
 
 def create(s,d,u):
     r=locked(s,TunnelRun,d.run_id)
+    if r.state=='aborted':raise HTTPException(409,'停风中止的试验只留存已采实样，不得冻结或交付')
     if r.state!='completed':raise HTTPException(409,'仅已完结试验可以提交交付复核')
     b=s.scalar(select(AcquisitionBatch).where(AcquisitionBatch.run_id==r.id).with_for_update())
     if not b or b.state!='frozen' or not b.summary or b.summary['missing_rate']!=0:raise HTTPException(409,'须完整覆盖通道并由主管冻结采集后交付')

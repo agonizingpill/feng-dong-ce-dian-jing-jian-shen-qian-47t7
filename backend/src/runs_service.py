@@ -6,6 +6,7 @@ from .models import Layout,Probe
 from .run_models import TunnelRun
 from .calibration_service import locked,current_certificate,view as certificate_view
 from .services import pack,pack_layout,selected,audit
+from . import windstop_service as windstop
 
 def signed_layout(s,id):
     l=locked(s,Layout,id)
@@ -16,12 +17,18 @@ def create(s,d,u):
     signed_layout(s,d.layout_id);x=TunnelRun(**d.model_dump());s.add(x);s.flush();audit(s,u,'编制开车核对 '+x.code);return pack(x)
 def revise(s,id,d,u):
     x=locked(s,TunnelRun,id)
-    if x.state!='planned':raise HTTPException(409,'运行中或已完结试验不可修改开车条件')
+    if x.state!='planned':raise HTTPException(409,'运行中、已完结或已中止试验不可修改开车条件')
     if x.layout_id!=d.layout_id or x.code!=d.code:raise HTTPException(409,'试验编号与布置关联不可变更')
     signed_layout(s,x.layout_id)
     for k,v in d.model_dump().items():setattr(x,k,v)
     audit(s,u,'修订开车核对 '+x.code);return pack(x)
 def start(s,id,u):
+    # Take the wind-stop gate lock before reading run state, so a concurrent
+    # stop either aborts this run first (blocking the start) or runs after the
+    # start commits (and aborts it). No start may slip past a committed stop.
+    windstop.control(s)
+    e=windstop.active(s)
+    if e:raise HTTPException(409,'紧急停风封锁中，须负责人复检解锁后才能开新车')
     x=locked(s,TunnelRun,id)
     if x.state!='planned':raise HTTPException(409,'仅计划试验可开车，不得重复启动')
     l=signed_layout(s,x.layout_id)
